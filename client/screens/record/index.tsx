@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import Toast from 'react-native-toast-message';
 import { Screen } from '@/components/Screen';
 import { useSafeRouter, useSafeSearchParams } from '@/hooks/useSafeRouter';
 import { Feather } from '@expo/vector-icons';
@@ -33,9 +34,13 @@ export default function RecordScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
-  const isViewMode = params.mode === 'view';
-  const isEditMode = params.mode === 'edit';
-  const isAddMode = params.mode === 'add';
+  const isViewMode = useMemo(() => params.mode === 'view', [params.mode]);
+  const isEditMode = useMemo(() => params.mode === 'edit', [params.mode]);
+  const isAddMode = useMemo(() => params.mode === 'add', [params.mode]);
+
+  const navigateBack = useCallback(() => {
+    router.back();
+  }, [router]);
 
   const handleSave = useCallback(async () => {
     if (!title.trim()) {
@@ -68,9 +73,16 @@ export default function RecordScreen() {
 
       const result = await response?.json();
       if (result?.code === 0) {
-        Alert.alert('成功', isAddMode ? '记录已保存' : '记录已更新', [
-          { text: '确定', onPress: () => router.back() },
-        ]);
+        // Show success toast and navigate back
+        Toast.show({
+          type: 'success',
+          text1: '成功',
+          text2: isAddMode ? '记录已保存' : '记录已更新',
+        });
+        // Small delay to let toast show
+        setTimeout(() => {
+          navigateBack();
+        }, 500);
       } else {
         Alert.alert('错误', result?.message || '保存失败');
       }
@@ -80,7 +92,7 @@ export default function RecordScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [title, content, isAddMode, isEditMode, params.id, router]);
+  }, [title, content, isAddMode, isEditMode, params.id, navigateBack]);
 
   const handleDelete = useCallback(() => {
     if (!params.id) return;
@@ -97,12 +109,19 @@ export default function RecordScreen() {
               method: 'DELETE',
             });
             const result = await response.json();
-            if (result.code === 0) {
-              Alert.alert('成功', '记录已删除', [
-                { text: '确定', onPress: () => router.back() },
-              ]);
+            if (result?.code === 0) {
+              // Show success toast and navigate back
+              Toast.show({
+                type: 'success',
+                text1: '成功',
+                text2: '记录已删除',
+              });
+              // Small delay to let toast show
+              setTimeout(() => {
+                navigateBack();
+              }, 500);
             } else {
-              Alert.alert('错误', result.message || '删除失败');
+              Alert.alert('错误', result?.message || '删除失败');
             }
           } catch (error) {
             console.error('Delete error:', error);
@@ -113,11 +132,15 @@ export default function RecordScreen() {
         },
       },
     ]);
-  }, [params.id, router]);
+  }, [params.id, navigateBack]);
 
   const handleEdit = useCallback(() => {
     router.replace('/record', { mode: 'edit', id: params.id, title, content });
   }, [router, params.id, title, content]);
+
+  const handleBack = useCallback(() => {
+    navigateBack();
+  }, [navigateBack]);
 
   return (
     <Screen>
@@ -129,7 +152,7 @@ export default function RecordScreen() {
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.back()}
+            onPress={handleBack}
             activeOpacity={0.7}
           >
             <Feather name="arrow-left" size={24} color="#2D3436" />
@@ -151,8 +174,13 @@ export default function RecordScreen() {
                   style={styles.headerButton}
                   onPress={handleDelete}
                   activeOpacity={0.7}
+                  disabled={isLoading}
                 >
-                  <Feather name="trash-2" size={20} color="#FF6B6B" />
+                  {isLoading ? (
+                    <ActivityIndicator size="small" color="#FF6B6B" />
+                  ) : (
+                    <Feather name="trash-2" size={20} color="#FF6B6B" />
+                  )}
                 </TouchableOpacity>
               </>
             )}
