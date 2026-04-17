@@ -21,7 +21,7 @@ const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || 'http://localhost:9
 
 interface RecordParams {
   mode: 'add' | 'edit' | 'view';
-  id?: number;
+  id?: number | string;
   title?: string;
   content?: string;
 }
@@ -29,6 +29,14 @@ interface RecordParams {
 export default function RecordScreen() {
   const router = useSafeRouter();
   const params = useSafeSearchParams<RecordParams>();
+  
+  // Ensure id is properly converted to number
+  const recordId = useMemo(() => {
+    if (!params.id) return null;
+    const parsed = typeof params.id === 'string' ? parseInt(params.id, 10) : params.id;
+    return isNaN(parsed) ? null : parsed;
+  }, [params.id]);
+
   const [title, setTitle] = useState(params.title || '');
   const [content, setContent] = useState(params.content || '');
   const [isLoading, setIsLoading] = useState(false);
@@ -62,27 +70,28 @@ export default function RecordScreen() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: title.trim(), content: content.trim() }),
         });
-      } else if (isEditMode && params.id) {
+      } else if (isEditMode && recordId) {
         // Update existing record
-        response = await fetch(`${API_BASE}/api/v1/records/${params.id}`, {
+        response = await fetch(`${API_BASE}/api/v1/records/${recordId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: title.trim(), content: content.trim() }),
         });
       }
 
-      const result = await response?.json();
+      if (!response) {
+        Alert.alert('错误', '网络请求失败');
+        return;
+      }
+
+      const result = await response.json();
       if (result?.code === 0) {
-        // Show success toast and navigate back
         Toast.show({
           type: 'success',
           text1: '成功',
           text2: isAddMode ? '记录已保存' : '记录已更新',
         });
-        // Small delay to let toast show
-        setTimeout(() => {
-          navigateBack();
-        }, 500);
+        setTimeout(() => navigateBack(), 500);
       } else {
         Alert.alert('错误', result?.message || '保存失败');
       }
@@ -92,10 +101,10 @@ export default function RecordScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [title, content, isAddMode, isEditMode, params.id, navigateBack]);
+  }, [title, content, isAddMode, isEditMode, recordId, navigateBack]);
 
   const handleDelete = useCallback(() => {
-    if (!params.id) return;
+    if (!recordId) return;
 
     Alert.alert('确认删除', '确定要删除这条记录吗？', [
       { text: '取消', style: 'cancel' },
@@ -105,21 +114,21 @@ export default function RecordScreen() {
         onPress: async () => {
           setIsLoading(true);
           try {
-            const response = await fetch(`${API_BASE}/api/v1/records/${params.id}`, {
+            console.log('Deleting record:', recordId);
+            const response = await fetch(`${API_BASE}/api/v1/records/${recordId}`, {
               method: 'DELETE',
             });
+            console.log('Delete response status:', response.status);
             const result = await response.json();
+            console.log('Delete result:', result);
+            
             if (result?.code === 0) {
-              // Show success toast and navigate back
               Toast.show({
                 type: 'success',
                 text1: '成功',
                 text2: '记录已删除',
               });
-              // Small delay to let toast show
-              setTimeout(() => {
-                navigateBack();
-              }, 500);
+              setTimeout(() => navigateBack(), 500);
             } else {
               Alert.alert('错误', result?.message || '删除失败');
             }
@@ -132,11 +141,11 @@ export default function RecordScreen() {
         },
       },
     ]);
-  }, [params.id, navigateBack]);
+  }, [recordId, navigateBack]);
 
   const handleEdit = useCallback(() => {
-    router.replace('/record', { mode: 'edit', id: params.id, title, content });
-  }, [router, params.id, title, content]);
+    router.replace('/record', { mode: 'edit', id: recordId, title, content });
+  }, [router, recordId, title, content]);
 
   const handleBack = useCallback(() => {
     navigateBack();

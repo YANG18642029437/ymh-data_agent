@@ -13,7 +13,7 @@ import {
 import { Screen } from '@/components/Screen';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { Feather } from '@expo/vector-icons';
-import RNSSE from 'react-native-sse';
+import EventSource from 'react-native-sse';
 
 const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || 'http://localhost:9091';
 
@@ -36,7 +36,7 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const flatListRef = useRef<FlatList>(null);
-  const eventSourceRef = useRef<RNSSE | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => {
@@ -55,6 +55,7 @@ export default function ChatScreen() {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const currentInput = inputText.trim();
     setInputText('');
     setIsLoading(true);
     scrollToBottom();
@@ -63,86 +64,100 @@ export default function ChatScreen() {
     const assistantMessageId = (Date.now() + 1).toString();
     let assistantContent = '';
 
-    // Call streaming API
+    // Add placeholder for assistant message
+    setMessages(prev => [
+      ...prev,
+      {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+      },
+    ]);
+
     try {
-      eventSourceRef.current = new RNSSE(`${API_BASE}/api/v1/chat`, {
+      // Create SSE connection with POST
+      const es = new EventSource(`${API_BASE}/api/v1/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query: userMessage.content }),
+        body: JSON.stringify({ query: currentInput }),
       });
+      eventSourceRef.current = es;
 
-      eventSourceRef.current.addEventListener('message', (event: { data: string | null }) => {
+      es.addEventListener('message', (event: { data: string | null }) => {
+        if (!event.data) return;
+        
         if (event.data === '[DONE]') {
           eventSourceRef.current?.close();
+          eventSourceRef.current = null;
           setIsLoading(false);
-          
-          // Update messages with final content
-          setMessages(prev => {
-            const updated = [...prev];
-            const index = updated.findIndex(m => m.id === assistantMessageId);
-            if (index !== -1) {
-              updated[index].content = assistantContent;
-            }
-            return updated;
-          });
           return;
         }
 
         assistantContent += event.data;
         
-        // Update assistant message in real-time
         setMessages(prev => {
           const updated = [...prev];
           const index = updated.findIndex(m => m.id === assistantMessageId);
           if (index !== -1) {
-            updated[index].content = assistantContent;
-          } else {
-            updated.push({
-              id: assistantMessageId,
-              role: 'assistant',
+            updated[index] = {
+              ...updated[index],
               content: assistantContent,
-              timestamp: Date.now(),
-            });
+            };
           }
           return updated;
         });
         scrollToBottom();
       });
 
-      eventSourceRef.current.addEventListener('error', () => {
+      es.addEventListener('error', (event: any) => {
+        console.error('SSE Error:', event);
         eventSourceRef.current?.close();
+        eventSourceRef.current = null;
         setIsLoading(false);
+        
         assistantContent = '抱歉，发生了错误，请稍后重试。';
         setMessages(prev => {
           const updated = [...prev];
           const index = updated.findIndex(m => m.id === assistantMessageId);
           if (index !== -1) {
-            updated[index].content = assistantContent;
+            updated[index] = {
+              ...updated[index],
+              content: assistantContent,
+            };
           }
           return updated;
         });
       });
 
-    } catch (error) {
+      es.addEventListener('open', () => {
+        console.log('SSE Connection opened');
+      });
+
+    } catch (error: any) {
       console.error('Chat error:', error);
       setIsLoading(false);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: assistantMessageId,
-          role: 'assistant',
-          content: '抱歉，发生了网络错误，请稍后重试。',
-          timestamp: Date.now(),
-        },
-      ]);
+      assistantContent = '抱歉，发生了错误，请稍后重试。';
+      setMessages(prev => {
+        const updated = [...prev];
+        const index = updated.findIndex(m => m.id === assistantMessageId);
+        if (index !== -1) {
+          updated[index] = {
+            ...updated[index],
+            content: assistantContent,
+          };
+        }
+        return updated;
+      });
     }
   }, [inputText, isLoading, scrollToBottom]);
 
   const handleBack = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
+      eventSourceRef.current = null;
     }
     router.back();
   }, [router]);
