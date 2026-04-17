@@ -90,6 +90,10 @@ export default function HomeScreen() {
     router.push('/record', { mode: 'view', id: record.id, title: record.title, content: record.content });
   }, [router]);
 
+  const handleChatPress = useCallback(() => {
+    router.push('/chat');
+  }, [router]);
+
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('zh-CN', {
@@ -141,8 +145,18 @@ export default function HomeScreen() {
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.pageTitle}>个人助手</Text>
-          <Text style={styles.pageSubtitle}>记录你的每一个想法</Text>
+          <View style={styles.headerLeft}>
+            <Text style={styles.pageTitle}>个人助手</Text>
+            <Text style={styles.pageSubtitle}>记录你的每一个想法</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.aiButton}
+            onPress={handleChatPress}
+            activeOpacity={0.8}
+          >
+            <Feather name="message-circle" size={20} color="#6C63FF" />
+            <Text style={styles.aiButtonText}>AI 助手</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Search Bar */}
@@ -222,6 +236,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 16,
     paddingBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerLeft: {
+    flex: 1,
+  },
+  aiButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(108,99,255,0.12)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  aiButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#6C63FF',
+    marginLeft: 6,
   },
   pageTitle: {
     fontSize: 28,

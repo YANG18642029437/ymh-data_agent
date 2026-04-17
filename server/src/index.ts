@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { getSupabaseClient } from "./storage/database/supabase-client";
-import { KnowledgeClient, Config } from 'coze-coding-dev-sdk';
+import { KnowledgeClient, Config, LLMClient } from 'coze-coding-dev-sdk';
 import type { KnowledgeDocument } from 'coze-coding-dev-sdk';
 import { DataSourceType } from 'coze-coding-dev-sdk';
 
@@ -229,6 +229,86 @@ app.get('/api/v1/records/search', async (req, res) => {
   } catch (err: any) {
     console.error('Error searching records:', err);
     res.status(500).json({ code: 1, message: err.message });
+  }
+});
+
+// POST /api/v1/chat - Streaming chat with knowledge base
+app.post('/api/v1/chat', async (req, res) => {
+  const { query } = req.body;
+
+  if (!query) {
+    return res.status(400).json({ error: 'Query is required' });
+  }
+
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, no-transform, must-revalidate');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  try {
+    // 1. Search knowledge base for relevant information
+    let contextText = '';
+    
+    try {
+      const searchResponse = await knowledgeClient.search(query, [KNOWLEDGE_TABLE], 5, 0.3);
+      
+      if (searchResponse.code === 0 && searchResponse.chunks && searchResponse.chunks.length > 0) {
+        contextText = searchResponse.chunks
+          .map(chunk => chunk.content)
+          .join('\n\n');
+      }
+    } catch (searchError) {
+      console.error('Knowledge search error:', searchError);
+      // Continue without knowledge context
+    }
+
+    // 2. Build system prompt
+    const systemPrompt = `你是用户的个人数据助手。你的职责是根据用户提供的记录数据来回答问题。
+
+当用户提供的问题与记录数据相关时，你应该：
+1. 基于搜索到的记录内容来回答问题
+2. 如果没有找到相关信息，诚实地告诉用户"我在你的记录中没有找到相关信息"
+3. 回答要简洁、有条理
+
+如果用户的问题与记录数据无关，你可以友好地提醒用户你只能回答与他的个人记录相关的问题。
+
+记录数据：
+${contextText || '（暂无相关记录）'}`;
+
+    // 3. Initialize LLM client and stream response
+    const llmConfig = new Config();
+    const llmClient = new LLMClient(llmConfig);
+
+    const messages = [
+      { role: 'system' as const, content: systemPrompt },
+      { role: 'user' as const, content: query },
+    ];
+
+    // Stream response
+    const stream = llmClient.stream(messages, {
+      temperature: 0.7,
+    });
+
+    let fullContent = '';
+    for await (const chunk of stream) {
+      if (chunk.content) {
+        const text = chunk.content.toString();
+        fullContent += text;
+        res.write(text);
+      }
+    }
+
+    // Send completion marker
+    res.write('[DONE]');
+    res.end();
+    console.log('Chat completed, sent', fullContent.length, 'characters');
+
+  } catch (err: any) {
+    console.error('Chat error:', err);
+    res.write('抱歉，发生了错误，请稍后重试。');
+    res.write('[DONE]');
+    res.end();
   }
 });
 
