@@ -165,12 +165,39 @@ app.get('/api/v1/records/search', async (req, res) => {
       return res.status(400).json({ code: 1, message: '搜索关键词不能为空' });
     }
 
-    // Search in vector database
-    const searchResponse = await knowledgeClient.search(q as string, [KNOWLEDGE_TABLE], 10, 0.3);
+    // Try semantic search first, fallback to keyword search
+    let records: any[] = [];
+    let source = 'keyword';
 
-    if (searchResponse.code !== 0) {
-      console.error('Vector search failed:', searchResponse.msg);
-      // Fallback to keyword search in Supabase
+    try {
+      const searchResponse = await knowledgeClient.search(q as string, [KNOWLEDGE_TABLE], 10, 0.3);
+
+      if (searchResponse.code === 0 && searchResponse.chunks && searchResponse.chunks.length > 0) {
+        // Extract titles from search results and search in Supabase
+        const titles = searchResponse.chunks.map(chunk => {
+          const match = chunk.content.match(/标题:\s*(.+?)\n/);
+          return match ? match[1].trim() : null;
+        }).filter(Boolean);
+
+        if (titles.length > 0) {
+          const { data, error } = await supabase
+            .from('records')
+            .select('id, title, content, created_at, updated_at')
+            .in('title', titles)
+            .order('created_at', { ascending: false });
+
+          if (!error && data && data.length > 0) {
+            records = data;
+            source = 'semantic';
+          }
+        }
+      }
+    } catch (vecError) {
+      console.error('Vector search error, falling back to keyword:', vecError);
+    }
+
+    // Fallback to keyword search if semantic search returned no results
+    if (records.length === 0) {
       const { data, error } = await supabase
         .from('records')
         .select('id, title, content, created_at, updated_at')
@@ -179,45 +206,10 @@ app.get('/api/v1/records/search', async (req, res) => {
         .limit(20);
 
       if (error) throw new Error(`搜索失败: ${error.message}`);
-
-      const records = (data || []).map(r => ({
-        id: r.id,
-        title: r.title,
-        content: r.content,
-        createdAt: r.created_at,
-        updatedAt: r.updated_at,
-      }));
-
-      return res.json({ code: 0, data: records, source: 'keyword' });
+      records = data || [];
     }
 
-    // Extract search results from chunks
-    const searchResults = searchResponse.chunks || [];
-    
-    if (searchResults.length === 0) {
-      return res.json({ code: 0, data: [], source: 'semantic' });
-    }
-
-    // Extract titles from search results and search in Supabase
-    const titles = searchResults.map(chunk => {
-      const match = chunk.content.match(/标题:\s*(.+?)\n/);
-      return match ? match[1].trim() : null;
-    }).filter(Boolean);
-
-    if (titles.length === 0) {
-      return res.json({ code: 0, data: [], source: 'semantic' });
-    }
-
-    // Fetch full records from Supabase
-    const { data, error } = await supabase
-      .from('records')
-      .select('id, title, content, created_at, updated_at')
-      .in('title', titles)
-      .order('created_at', { ascending: false });
-
-    if (error) throw new Error(`获取记录失败: ${error.message}`);
-
-    const records = (data || []).map(r => ({
+    const result = records.map(r => ({
       id: r.id,
       title: r.title,
       content: r.content,
@@ -225,7 +217,7 @@ app.get('/api/v1/records/search', async (req, res) => {
       updatedAt: r.updated_at,
     }));
 
-    res.json({ code: 0, data: records, source: 'semantic' });
+    res.json({ code: 0, data: result, source });
   } catch (err: any) {
     console.error('Error searching records:', err);
     res.status(500).json({ code: 1, message: err.message });
@@ -295,19 +287,20 @@ ${contextText || '（暂无相关记录）'}`;
       if (chunk.content) {
         const text = chunk.content.toString();
         fullContent += text;
-        res.write(text);
+        // Must use SSE format: "data: xxx\n\n" for EventSource client
+        res.write(`data: ${text}\n\n`);
       }
     }
 
-    // Send completion marker
-    res.write('[DONE]');
+    // Send completion marker in SSE format
+    res.write('data: [DONE]\n\n');
     res.end();
     console.log('Chat completed, sent', fullContent.length, 'characters');
 
   } catch (err: any) {
     console.error('Chat error:', err);
-    res.write('抱歉，发生了错误，请稍后重试。');
-    res.write('[DONE]');
+    res.write('data: 抱歉，发生了错误，请稍后重试。\n\n');
+    res.write('data: [DONE]\n\n');
     res.end();
   }
 });

@@ -6,7 +6,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
+  Modal,
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
@@ -41,6 +41,7 @@ export default function RecordScreen() {
   const [content, setContent] = useState(params.content || '');
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
 
   const isViewMode = useMemo(() => params.mode === 'view', [params.mode]);
   const isEditMode = useMemo(() => params.mode === 'edit', [params.mode]);
@@ -52,11 +53,11 @@ export default function RecordScreen() {
 
   const handleSave = useCallback(async () => {
     if (!title.trim()) {
-      Alert.alert('提示', '请输入标题');
+      Toast.show({ type: 'error', text1: '提示', text2: '请输入标题' });
       return;
     }
     if (!content.trim()) {
-      Alert.alert('提示', '请输入内容');
+      Toast.show({ type: 'error', text1: '提示', text2: '请输入内容' });
       return;
     }
 
@@ -80,7 +81,7 @@ export default function RecordScreen() {
       }
 
       if (!response) {
-        Alert.alert('错误', '网络请求失败');
+        Toast.show({ type: 'error', text1: '错误', text2: '网络请求失败' });
         return;
       }
 
@@ -93,11 +94,11 @@ export default function RecordScreen() {
         });
         setTimeout(() => navigateBack(), 500);
       } else {
-        Alert.alert('错误', result?.message || '保存失败');
+        Toast.show({ type: 'error', text1: '错误', text2: result?.message || '保存失败' });
       }
     } catch (error) {
       console.error('Save error:', error);
-      Alert.alert('错误', '网络请求失败');
+      Toast.show({ type: 'error', text1: '错误', text2: '网络请求失败' });
     } finally {
       setIsSaving(false);
     }
@@ -105,42 +106,48 @@ export default function RecordScreen() {
 
   const handleDelete = useCallback(() => {
     if (!recordId) return;
+    setShowDeleteModal(true);
+  }, [recordId]);
 
-    Alert.alert('确认删除', '确定要删除这条记录吗？', [
-      { text: '取消', style: 'cancel' },
-      {
-        text: '删除',
-        style: 'destructive',
-        onPress: async () => {
-          setIsLoading(true);
-          try {
-            console.log('Deleting record:', recordId);
-            const response = await fetch(`${API_BASE}/api/v1/records/${recordId}`, {
-              method: 'DELETE',
-            });
-            console.log('Delete response status:', response.status);
-            const result = await response.json();
-            console.log('Delete result:', result);
-            
-            if (result?.code === 0) {
-              Toast.show({
-                type: 'success',
-                text1: '成功',
-                text2: '记录已删除',
-              });
-              setTimeout(() => navigateBack(), 500);
-            } else {
-              Alert.alert('错误', result?.message || '删除失败');
-            }
-          } catch (error) {
-            console.error('Delete error:', error);
-            Alert.alert('错误', '网络请求失败');
-          } finally {
-            setIsLoading(false);
-          }
-        },
-      },
-    ]);
+  const confirmDelete = useCallback(async () => {
+    if (!recordId) return;
+    setShowDeleteModal(false);
+    setIsLoading(true);
+    try {
+      /**
+       * 服务端文件：server/src/index.ts
+       * 接口：DELETE /api/v1/records/:id
+       * Path 参数：id: string (会被 parseInt 转为数字)
+       */
+      const response = await fetch(`${API_BASE}/api/v1/records/${recordId}`, {
+        method: 'DELETE',
+      });
+      const result = await response.json();
+
+      if (result?.code === 0) {
+        Toast.show({
+          type: 'success',
+          text1: '成功',
+          text2: '记录已删除',
+        });
+        setTimeout(() => navigateBack(), 500);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: '错误',
+          text2: result?.message || '删除失败',
+        });
+      }
+    } catch (error) {
+      console.error('Delete error:', error);
+      Toast.show({
+        type: 'error',
+        text1: '错误',
+        text2: '网络请求失败',
+      });
+    } finally {
+      setIsLoading(false);
+    }
   }, [recordId, navigateBack]);
 
   const handleEdit = useCallback(() => {
@@ -284,6 +291,37 @@ export default function RecordScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        visible={showDeleteModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeleteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>确认删除</Text>
+            <Text style={styles.modalMessage}>确定要删除这条记录吗？此操作不可撤销。</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setShowDeleteModal(false)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalCancelText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalDeleteButton]}
+                onPress={confirmDelete}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalDeleteText}>删除</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -442,6 +480,61 @@ const styles = StyleSheet.create({
   saveButtonText: {
     fontSize: 16,
     fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 28,
+    width: '85%',
+    maxWidth: 360,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#2D3436',
+    marginBottom: 12,
+  },
+  modalMessage: {
+    fontSize: 15,
+    color: '#636E72',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 12,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCancelButton: {
+    backgroundColor: '#F0F0F3',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#636E72',
+  },
+  modalDeleteButton: {
+    backgroundColor: '#FF6B6B',
+  },
+  modalDeleteText: {
+    fontSize: 16,
+    fontWeight: '600',
     color: '#FFFFFF',
   },
 });

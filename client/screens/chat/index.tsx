@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import { Screen } from '@/components/Screen';
 import { useSafeRouter } from '@/hooks/useSafeRouter';
 import { Feather } from '@expo/vector-icons';
 import EventSource from 'react-native-sse';
+import Toast from 'react-native-toast-message';
 
 const API_BASE = process.env.EXPO_PUBLIC_BACKEND_BASE_URL || 'http://localhost:9091';
 
@@ -44,7 +45,17 @@ export default function ChatScreen() {
     }, 100);
   }, []);
 
-  const handleSend = useCallback(async () => {
+  // Cleanup SSE on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleSend = useCallback(() => {
     if (!inputText.trim() || isLoading) return;
 
     const userMessage: Message = {
@@ -75,8 +86,19 @@ export default function ChatScreen() {
       },
     ]);
 
+    // Close any existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
     try {
-      // Create SSE connection with POST
+      /**
+       * 服务端文件：server/src/index.ts
+       * 接口：POST /api/v1/chat
+       * Body 参数：query: string
+       * 响应：SSE 流式数据，格式为 "data: xxx\n\n"，以 "data: [DONE]\n\n" 结束
+       */
       const es = new EventSource(`${API_BASE}/api/v1/chat`, {
         method: 'POST',
         headers: {
@@ -86,18 +108,41 @@ export default function ChatScreen() {
       });
       eventSourceRef.current = es;
 
-      es.addEventListener('message', (event: { data: string | null }) => {
-        if (!event.data) return;
-        
-        if (event.data === '[DONE]') {
-          eventSourceRef.current?.close();
-          eventSourceRef.current = null;
+      es.addEventListener('open', () => {
+        console.log('SSE Connection opened');
+      });
+
+      es.addEventListener('message', (event: any) => {
+        const data = event.data;
+        if (!data) return;
+
+        if (data === '[DONE]') {
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+          }
           setIsLoading(false);
+
+          // If no content was received, show fallback message
+          if (!assistantContent) {
+            assistantContent = '抱歉，未获取到有效回复，请稍后重试。';
+            setMessages(prev => {
+              const updated = [...prev];
+              const index = updated.findIndex(m => m.id === assistantMessageId);
+              if (index !== -1) {
+                updated[index] = {
+                  ...updated[index],
+                  content: assistantContent,
+                };
+              }
+              return updated;
+            });
+          }
           return;
         }
 
-        assistantContent += event.data;
-        
+        assistantContent += data;
+
         setMessages(prev => {
           const updated = [...prev];
           const index = updated.findIndex(m => m.id === assistantMessageId);
@@ -113,27 +158,29 @@ export default function ChatScreen() {
       });
 
       es.addEventListener('error', (event: any) => {
-        console.error('SSE Error:', event);
-        eventSourceRef.current?.close();
-        eventSourceRef.current = null;
+        console.error('SSE Error:', JSON.stringify(event));
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
         setIsLoading(false);
-        
-        assistantContent = '抱歉，发生了错误，请稍后重试。';
-        setMessages(prev => {
-          const updated = [...prev];
-          const index = updated.findIndex(m => m.id === assistantMessageId);
-          if (index !== -1) {
-            updated[index] = {
-              ...updated[index],
-              content: assistantContent,
-            };
-          }
-          return updated;
-        });
-      });
 
-      es.addEventListener('open', () => {
-        console.log('SSE Connection opened');
+        // Only show error if we haven't received any content
+        if (!assistantContent) {
+          assistantContent = '抱歉，发生了错误，请稍后重试。';
+          setMessages(prev => {
+            const updated = [...prev];
+            const index = updated.findIndex(m => m.id === assistantMessageId);
+            if (index !== -1) {
+              updated[index] = {
+                ...updated[index],
+                content: assistantContent,
+              };
+            }
+            return updated;
+          });
+        }
+        Toast.show({ type: 'error', text1: '连接错误', text2: 'AI 助手连接异常' });
       });
 
     } catch (error: any) {
@@ -164,7 +211,7 @@ export default function ChatScreen() {
 
   const renderMessage = ({ item }: { item: Message }) => {
     const isUser = item.role === 'user';
-    
+
     return (
       <View style={[styles.messageRow, isUser && styles.messageRowUser]}>
         {!isUser && (
@@ -244,6 +291,7 @@ export default function ChatScreen() {
               multiline
               maxLength={500}
               editable={!isLoading}
+              onSubmitEditing={handleSend}
             />
             <TouchableOpacity
               style={[styles.sendButton, (!inputText.trim() || isLoading) && styles.sendButtonDisabled]}
@@ -251,10 +299,10 @@ export default function ChatScreen() {
               disabled={!inputText.trim() || isLoading}
               activeOpacity={0.7}
             >
-              <Feather 
-                name="send" 
-                size={20} 
-                color={inputText.trim() && !isLoading ? '#FFFFFF' : '#B2BEC3'} 
+              <Feather
+                name="send"
+                size={20}
+                color={inputText.trim() && !isLoading ? '#FFFFFF' : '#B2BEC3'}
               />
             </TouchableOpacity>
           </View>
@@ -301,7 +349,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitleText: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: '#2D3436',
   },
@@ -315,8 +363,8 @@ const styles = StyleSheet.create({
   },
   messagesContent: {
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 16,
+    paddingVertical: 12,
+    paddingBottom: 20,
   },
   messageRow: {
     flexDirection: 'row',
@@ -327,13 +375,13 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   avatarContainer: {
-    marginHorizontal: 8,
+    marginBottom: 4,
   },
   avatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(108,99,255,0.12)',
+    backgroundColor: '#E8E6FF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -345,15 +393,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderRadius: 20,
+    marginHorizontal: 8,
+  },
+  userBubble: {
+    backgroundColor: '#6C63FF',
+    borderBottomRightRadius: 4,
   },
   assistantBubble: {
     backgroundColor: '#FFFFFF',
-    borderBottomLeftRadius: 6,
+    borderBottomLeftRadius: 4,
     ...Platform.select({
       ios: {
         shadowColor: '#D1D9E6',
         shadowOffset: { width: 2, height: 2 },
-        shadowOpacity: 0.4,
+        shadowOpacity: 0.3,
         shadowRadius: 4,
       },
       android: {
@@ -361,14 +414,10 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  userBubble: {
-    backgroundColor: '#6C63FF',
-    borderBottomRightRadius: 6,
-  },
   messageText: {
     fontSize: 15,
-    color: '#2D3436',
     lineHeight: 22,
+    color: '#2D3436',
   },
   userMessageText: {
     color: '#FFFFFF',
@@ -378,36 +427,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 8,
+    gap: 8,
   },
   loadingText: {
     fontSize: 13,
     color: '#636E72',
-    marginLeft: 8,
   },
   inputContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingBottom: Platform.OS === 'ios' ? 16 : 12,
+    paddingTop: 8,
     backgroundColor: '#F0F0F3',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.05)',
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: '#E8E8EB',
+    backgroundColor: '#FFFFFF',
     borderRadius: 24,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.6)',
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#D1D9E6',
+        shadowOffset: { width: 2, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
   },
   input: {
     flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     fontSize: 15,
     color: '#2D3436',
     maxHeight: 100,
-    paddingTop: 8,
-    paddingBottom: 8,
   },
   sendButton: {
     width: 40,
@@ -416,9 +473,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#6C63FF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 8,
   },
   sendButtonDisabled: {
-    backgroundColor: '#E8E8EB',
+    backgroundColor: '#E8E6FF',
   },
 });

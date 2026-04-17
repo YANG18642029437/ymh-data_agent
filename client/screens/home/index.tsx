@@ -172,14 +172,19 @@ export default function HomeScreen() {
               onSubmitEditing={handleSearch}
               returnKeyType="search"
             />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => {
-                setSearchQuery('');
-                fetchRecords();
-              }}>
-                <Feather name="x" size={18} color="#B2BEC3" />
-              </TouchableOpacity>
-            )}
+            {searchQuery.length > 0 ? (
+              <View style={styles.searchActions}>
+                <TouchableOpacity onPress={handleSearch} style={styles.searchActionButton}>
+                  <Text style={styles.searchActionText}>搜索</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => {
+                  setSearchQuery('');
+                  fetchRecords();
+                }}>
+                  <Feather name="x" size={18} color="#B2BEC3" />
+                </TouchableOpacity>
+              </View>
+            ) : null}
           </View>
         </View>
 
@@ -286,6 +291,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#2D3436',
     marginLeft: 10,
+  },
+  searchActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  searchActionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    backgroundColor: '#6C63FF',
+    borderRadius: 12,
+  },
+  searchActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
   listContent: {
     paddingHorizontal: 24,
